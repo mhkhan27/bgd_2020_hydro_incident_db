@@ -1,0 +1,17 @@
+.Rproj.user
+.Rhistory
+.RData
+.Ruserdata
+
+
+
+/outputs/*
+/inputs/*
+/GIS/*
+/scrap/*
+/other/*
+
+!/outputs/.gitkeep
+!/inputs/.gitkeep
+!/scrap/.gitkeep
+!/other/.gitkeep
