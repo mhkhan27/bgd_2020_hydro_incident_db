@@ -1,0 +1,53 @@
+---
+title: "Rain Gauge Frequency Checks"
+# author: "Zack Arno" 
+output:
+    # hide_code: true
+  flexdashboard::flex_dashboard:
+    vertical_layout: scroll
+    orientation: columns
+
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+source("scripts/draft.R")
+
+```
+Location- GSB Cox's Bazaar-1227
+================================
+## Location- GSB Cox's Bazaar-1227
+
+```{r }
+precipitation_with_all_date_time$`GSB Cox's Bazaar-1227` %>% AMR::freq() 
+```
+Location- UN Camp 16-1280
+================================
+## Location- UN Camp 16-1280
+
+```{r }
+precipitation_with_all_date_time$`UN Camp 16-1280` %>% AMR::freq()
+```
+Location- UN Chakmarkul-1278
+================================
+## Location- UN Chakmarkul-1278
+
+```{r }
+precipitation_with_all_date_time$`UN Chakmarkul-1278` %>% AMR::freq() 
+```
+Location- GSB Teknaf-1226
+================================
+## Location- GSB Teknaf-1226
+
+```{r }
+precipitation_with_all_date_time$`GSB Teknaf-1226` %>% AMR::freq()
+```
+Location- UN Kuturc-1279
+================================
+## Location- UN Kuturc-1279
+
+```{r }
+precipitation_with_all_date_time$`UN Kuturc-1279` %>% AMR::freq()
+```
+
+

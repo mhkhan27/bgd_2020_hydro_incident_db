@@ -15,8 +15,7 @@ cols_needed_for_indicent <-   c("Date.of.assessment",
                                 "Number.of.incidents", "Affected.HHs", 
                                 "Affected.individuals", "Casualties..ind.", "Missing.ind", "Injured.ind", 
                                 "Displaced.HH", "Displaced.ind",
-                                "Partially.Damaged.shelters", "Totally.Damaged.shelters", "Damaged.waterpoints", 
-                                "Damaged.latrines", "Damaged.health.facilities", "Damaged.food.distribution.site")
+                                "Partially.Damaged.shelters", "Totally.Damaged.shelters")
 
 rename_at_1 <- c("GSB.Cox.s.Bazaar", "GSB.Teknaf", "UN.Camp.16", "UN.Kuturc", 
                "UN.Chakmarkul") 
@@ -36,7 +35,7 @@ full_data_order <- c("Date", "GSB Cox's Bazaar-1227", "UN Camp 16-1280", "UN Cha
 # read_data ---------------------------------------------------------------
 
 incident_report_raw <- read.csv(incident_report_file_path,na.strings = c("NA",""," ")) %>% 
-  dplyr::select(cols_needed_for_indicent) %>% mutate()
+  dplyr::select(cols_needed_for_indicent) 
 
 precipitation_jan_to_may <- list.files(path = precipitation_folder_path,pattern = "*reporting",full.names = T)
 precipitation_jun_to_aug <- list.files(path = precipitation_folder_path,pattern = "*GSB",full.names = T)
