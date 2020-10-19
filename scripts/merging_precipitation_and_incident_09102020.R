@@ -7,6 +7,7 @@ library(stringr)
 library(data.table)
 library(lubridate)
 library(tidyquant)
+library(ggplot2)
 source("scripts/path.R")
 
 # clean_round_date<-function(df, date_column){
@@ -30,7 +31,11 @@ precipitation_jun_to_aug <- list.files(path = precipitation_folder_path,pattern 
 
 # other dataset -----------------------------------------------------------
 
-chirps_dataset <- read.csv(chirps_dataset_path,na.strings = c("NA",""," "),stringsAsFactors = F)
+chirps_dataset <- read.csv(chirps_dataset_path,na.strings = c("NA",""," "),stringsAsFactors = F) %>% mutate(
+  date = dmy(system.time_start),
+  precipitataion_chirps = precipitation
+) %>% select(date,precipitataion_chirps)
+
 cfrs_dataset <- read.csv(cfsr_dataset_path,na.strings = c("NA",""," "),stringsAsFactors = F)
 
 cfrs_dataset<- cfrs_dataset %>%
@@ -41,7 +46,7 @@ cfrs_dataset<- cfrs_dataset %>%
          datetime= ymd_hms(datetime_char)
   ) %>%
   with_tz("Asia/Dhaka") %>% dplyr::group_by(date) %>% dplyr::summarise(
-    cfrs_precipitation = sum(mm,na.rm=T)
+    precipitation_cfrs = sum(mm,na.rm=T)
   )
 
 # precipitation -----------------------------------------------------------
@@ -126,7 +131,7 @@ precipitation_with_all_date_time_pivot_longer <- precipitation_with_all_date_tim
 
 precipitation_with_all_date_time_pivot_longer <- precipitation_with_all_date_time_pivot_longer %>% filter(
   time_date < max(time_date)
-)
+)#remove last date, so rolling max has full 24 hr for each day
 precip_roll_max<- precipitation_with_all_date_time_pivot_longer %>% 
  mutate(
     date = as.Date(time_date)) %>% 
@@ -248,14 +253,16 @@ precipitation_BMD_data <- precipitation_BMD %>%  mutate(
 
 # join_precipitation ------------------------------------------------------
 
-full_data2<- full_data2 %>% left_join(precipitation_BMD_data,by =c ("date"="Date"))
-
+full_data2<- full_data2 %>% left_join(precipitation_BMD_data,by =c ("date"="Date")) #join BMD data
+full_data2<- full_data2 %>% left_join(chirps_dataset) #join CHIRPS DATA
+full_data2<- full_data2 %>% left_join(cfrs_dataset) #JOIN CFSR data
 
 full_data2 <- full_data2 %>% dplyr::select(c("date", "interval.GSB Cox's Bazaar-1227", "interval.GSB Teknaf-1226", 
   "interval.UN Camp 16-1280", "interval.UN Chakmarkul-1278", "interval.UN Kuturc-1279", 
   "max_3_hr_interval.GSB Cox's Bazaar-1227", "max_3_hr_interval.GSB Teknaf-1226", 
   "max_3_hr_interval.UN Camp 16-1280", "max_3_hr_interval.UN Chakmarkul-1278", 
-  "max_3_hr_interval.UN Kuturc-1279","BMD_Precipitation_value","total_number_of_incident_hh", "Number.of.incidents_Wind-Storm", 
+  "max_3_hr_interval.UN Kuturc-1279","BMD_Precipitation_value","precipitataion_chirps",
+  "precipitation_cfrs","total_number_of_incident_hh", "Number.of.incidents_Wind-Storm", 
   "Number.of.incidents_Slope-failure", "Number.of.incidents_Flood", 
   "Number.of.incidents_Lightning ","total_affected_hh", "Affected.HHs_Wind-Storm", 
   "Affected.HHs_Slope-failure", "Affected.HHs_Flood", "Affected.HHs_Lightning ", "total_displaced_hh",
@@ -284,5 +291,136 @@ precipitation_interval_and_rendered <- precipitation_with_all_date_time %>% left
 list_of_datasets <- list("Daily_Summary" = full_data2, "precepitation_dataset" = precipitation_interval_and_rendered)
 write.xlsx(list_of_datasets, file = paste0("outputs/compile_dataset/",str_replace_all(Sys.Date(),"-",""),"_","hydromatrological_dataset",".xlsx"))
 
-names(full_data2) %>% as.data.frame() %>% write.csv("names.csv") 
+# names(full_data2) %>% as.data.frame() %>% write.csv("names.csv") 
+
+
+
+# charts ------------------------------------------------------------------
+
+precipitation_data_for_charts <- full_data2 %>% select(c("date", "interval.GSB Cox's Bazaar-1227", "interval.GSB Teknaf-1226", 
+                                                         "interval.UN Camp 16-1280", "interval.UN Chakmarkul-1278", "interval.UN Kuturc-1279"
+                                                        ))
+precipitation_data_for_charts <- precipitation_data_for_charts %>% 
+  setnames(new = c("GSB Cox's Bazaar-1227", "GSB Teknaf-1226", 
+              "UN Camp 16-1280", "UN Chakmarkul-1278", "UN Kuturc-1279" 
+                 ),old = c("interval.GSB Cox's Bazaar-1227", "interval.GSB Teknaf-1226", 
+                                      "interval.UN Camp 16-1280", "interval.UN Chakmarkul-1278", "interval.UN Kuturc-1279"
+                                      ))
+
+
+precipitation_data_for_charts_pivot_longer_with_NAs <- pivot_longer(precipitation_data_for_charts,cols = !date,names_to = "Device",values_to = "precipitation")
+ 
+
+precipitation_data_for_charts_pivot_longer <- precipitation_data_for_charts_pivot_longer_with_NAs %>% filter(!is.na(precipitation))
+
+
+precipitation_data_for_charts_pivot_longer$Month <- month(precipitation_data_for_charts_pivot_longer$date,label = T,abbr = T)
+
+monthly_data <- precipitation_data_for_charts_pivot_longer %>% dplyr::group_by(Month, Device) %>% dplyr::summarise(
+  Day_Count = n() 
+)
+
+
+ggplot(precipitation_data_for_charts_pivot_longer_with_NAs, aes(x=date, y=precipitation)) + 
+  geom_line(method=lm,se=FALSE,linetype="solid",
+              color="#ee5859",size=1.2,fullrange=TRUE,formula = y ~ x)+
+  # facet_grid(~period) +
+  theme(axis.title.x  = element_text(size = 18),
+        axis.title.y  = element_text(size = 18),
+        axis.line = element_blank(),
+        axis.text.x = element_text(size = 18,angle = 45,vjust = -0,hjust = -.2),
+        axis.text.y = element_text(size = 18),
+        panel.border = element_rect(colour = "black", fill=NA, size=.8),
+        panel.background = element_blank(),
+        panel.grid.major.x= element_line(size = 0.5, linetype = "dashed",
+                                         colour = "#c1c1c1"),
+        # panel.grid.minor.x= element_line(size = 0.5, linetype = "dashed",
+        # colour = "#c1c1c1"),
+        
+        panel.grid.major.y = element_line(size = 0.5, linetype = "dashed",
+                                          colour = "#c1c1c1"),
+        panel.grid.minor.x = element_line(size = 0.5, linetype = "dashed",
+                             colour = "#c1c1c1"),
+        panel.spacing = unit(.5,"cm"),
+        legend.title=element_blank(),
+        legend.text = element_text(size = 16,color="#58585A"),
+        legend.position = "bottom",
+        legend.justification = .45,
+        legend.key.width =  unit(1,"cm"),
+        legend.spacing.x = unit(.5, "cm"),
+        legend.spacing.y = unit(.9, "cm"),
+        legend.key.size = unit(1, 'lines'),
+        legend.key = element_rect(fill = NA),
+        plot.margin = unit(c(.1, .1, 0, 0), "cm"),
+        strip.text = element_text(size=18),
+        legend.text.align = 0)+
+  facet_wrap(.~Device,ncol= 3)+
+  scale_x_date(date_labels="%b",date_breaks  ="1 month",
+               limits=c(as_date("2019-12-30"),as_date("2020-09-30")),expand = c(0,0))+
+  ylab("Precipitation (mm)") +xlab("")
+
+
+ggsave(path = "outputs/charts/",filename ="precipitatiaon.jpg" ,width=40,height=20,units="cm",scale = 1.8,dpi = 400)
+
+
+
+######################
+
+df<-precipitation_with_all_date_time_pivot_longer
+df$Device.name <- str_replace_all(df$Device.name ,
+                                  "interval.","")
+
+df <- df %>% mutate(
+  time = format(time_date, format = "%H:%M:%S"),
+  date = as.Date(time_date)
+)
+
+dat.summary = df %>% group_by(by8_hr=cut(time_date, "480 min"),date,Device.name) %>%
+  summarise(count=sum(!is.na(Interval))) %>% ungroup() %>% mutate(
+    available = if_else(count>0,"yes","no",NULL)
+  )
+
+
+dat.summary_2<- dat.summary %>% group_by(date,Device.name) %>%  summarise(
+  useable_data = if_else(sum(available == "yes",na.rm=T)>1,1,0,NULL)) %>% ungroup() %>% mutate(
+    Month = month(date,label = T,abbr = T)
+  ) %>% group_by(Device.name,Month) %>% summarise(
+    count= sum(useable_data)
+  )
+
+palette <- c ("#ee5859","#d1d3d4","#58585a", "#d2cbb8","#0067a9")
+ggplot(dat.summary_2, aes(fill=Device.name, y=count, x=Month)) + 
+  geom_bar(position=position_dodge(.8),width = .8, stat="identity")+
+  theme(axis.title.x = element_blank(),
+        axis.line = element_blank(),
+        # axis.line.x.top = element_line(),
+        # axis.line.y.right = element_line(),
+        # axis.line.y = element_line(),
+        axis.text = element_text(size = 8),
+        panel.border = element_rect(colour = "black", fill=NA, size=.8),
+        panel.background = element_blank(),
+        panel.grid.minor.x= element_line(size = 0.5, linetype = "dashed",
+                                         colour = "#c1c1c1"),
+        # panel.grid.major.x = element_line(size = 0.5, linetype = "dashed",
+        #                                   colour = "#c1c1c1"),
+        # panel.grid.minor.y= element_blank(),
+        panel.grid.minor.y = element_line(size = 0.5, linetype = "dashed",
+                                          colour = "#c1c1c1"),
+        # panel.border = element_rect(colour = "#58585a", fill=NA, size=1),
+        panel.spacing = unit(0,"cm"),
+        legend.title=element_blank(),
+        legend.text = element_text(size = 8,color="#58585A"),
+        legend.position = "bottom",
+        legend.justification = .25,
+        legend.key.width =  unit(1,"cm"),
+        legend.spacing.x = unit(.5, "cm"),
+        legend.spacing.y = unit(.9, "cm"),
+        legend.key.size = unit(1, 'lines'),
+        legend.key = element_rect(fill = NA),
+        plot.margin = unit(c(.1, .1, 0, 0), "cm"),
+        legend.text.align = 0)+ ylab("Number of days")+
+  scale_fill_manual(values = palette)
+# scale_linetype_manual(values = line_typ)
+
+ggsave(path = "outputs/charts/",filename ="monthly_count.jpg" ,width=13,height=7,units="cm",scale = 1.8,dpi = 400)
 
