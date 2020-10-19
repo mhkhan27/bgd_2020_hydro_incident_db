@@ -28,6 +28,21 @@ cols_needed_for_indicent <-   c("Date.of.assessment", "Date.of.incident",
 precipitation_jan_to_may <- list.files(path = precipitation_folder_path,pattern = "*reporting",full.names = T)
 precipitation_jun_to_aug <- list.files(path = precipitation_folder_path,pattern = "*GSB",full.names = T)
 
+# other dataset -----------------------------------------------------------
+
+chirps_dataset <- read.csv(chirps_dataset_path,na.strings = c("NA",""," "),stringsAsFactors = F)
+cfrs_dataset <- read.csv(cfsr_dataset_path,na.strings = c("NA",""," "),stringsAsFactors = F)
+
+cfrs_dataset<- cfrs_dataset %>%
+  mutate(date= dmy(system.time_start),
+         mm= Precipitation_rate_surface_6_Hour_Average*(1/0.997)* 60*60*6,
+         tday= rep_len(c("00:00:00","06:00:00","12:00:00","18:00:00"),length.out = nrow(.)),
+         datetime_char= paste(date,tday),
+         datetime= ymd_hms(datetime_char)
+  ) %>%
+  with_tz("Asia/Dhaka") %>% dplyr::group_by(date) %>% dplyr::summarise(
+    cfrs_precipitation = sum(mm,na.rm=T)
+  )
 
 # precipitation -----------------------------------------------------------
 

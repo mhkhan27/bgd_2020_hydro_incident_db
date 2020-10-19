@@ -39,7 +39,8 @@ incident_report_raw <- read.csv(incident_report_file_path,na.strings = c("NA",""
 
 precipitation_jan_to_may <- list.files(path = precipitation_folder_path,pattern = "*reporting",full.names = T)
 precipitation_jun_to_aug <- list.files(path = precipitation_folder_path,pattern = "*GSB",full.names = T)
-
+chirps_dataset <- read.csv(chirps_dataset_path,na.strings = c("NA",""," "),stringsAsFactors = F)
+cfrs_dataset <- read.csv(cfrs_dataset_path,na.strings = c("NA",""," "),stringsAsFactors = F)
 # incident_report ---------------------------------------------------------
 
 incident_pivot_wider <- incident_report_raw %>% pivot_wider(names_from = Type.of.incident ,values_from = Number.of.incidents,
