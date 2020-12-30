@@ -9,4 +9,4 @@ cfsr_dataset_path <- "inputs/cfsr_daily_rainfall_2020_jan_through_october_16.csv
 
 # Folder of onthly precipitation csv's. Data from UNDP for 5 gauges:
 # GSB Cox's Bazaar, GSB Teknaf, UN Camp 16, UN Kuturc & UN Chakmarkul
-precipitation_folder_path <- "inputs/precipitation_data/2020/"
+precipitation_folder_path <- "inputs/Processed_precipitation_data/2020/"
