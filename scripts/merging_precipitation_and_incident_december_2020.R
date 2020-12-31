@@ -1,4 +1,12 @@
-rm (list = ls())
+# Hydro-Meteorological Database
+# Data Merge Script
+# Natural Hazards TWG 
+# December 2020
+
+# This script takes hydro-meteorological data and combines it with incident reports from the Bangladesh refugee camps to produce a single dataset.
+
+# Preamble ----------------------------------------------------------------
+
 library(rlang)
 library(dplyr)
 library(tidyr)
@@ -8,16 +16,15 @@ library(data.table)
 library(lubridate)
 library(tidyquant)
 library(ggplot2)
+
+# Load in the paths to the input data sources:
 source("scripts/path.R")
 
-# clean_round_date<-function(df, date_column){
-#   df$clean_floored_date<-df[[date_column]] %>% trimws() %>% dmy_hm() %>% floor_date("15 mins")
-# }
+# Set up function for formatting dates:
+clean_round_date<-function(df, date_column){
+  df$clean_floored_date<-df[[date_column]] %>% trimws() %>% dmy_hm() %>% floor_date("15 mins")
+}
 
-rename_at_1 <- c("GSB.Cox.s.Bazaar", "GSB.Teknaf", "UN.Camp.16", "UN.Kuturc", 
-                 "UN.Chakmarkul") 
-rename_to_1 <- c("GSB Cox's Bazaar-1227", 
-                 "GSB Teknaf-1226", "UN Camp 16-1280","UN Kuturc-1279" ,"UN Chakmarkul-1278")
 cols_needed_for_indicent <-   c("Date.of.assessment", "Date.of.incident",
                                 "Type.of.incident", 
                                 "Number.of.incidents", "Affected.HHs", 
@@ -25,82 +32,114 @@ cols_needed_for_indicent <-   c("Date.of.assessment", "Date.of.incident",
                                 "Displaced.HH", "Displaced.ind",
                                 "Partially.Damaged.shelters", "Totally.Damaged.shelters")
 
-
+# Precipitation file structure changed in June. List the two groups of files: 
 precipitation_jan_to_may <- list.files(path = precipitation_folder_path,pattern = "*reporting",full.names = T)
-precipitation_jun_to_aug <- list.files(path = precipitation_folder_path,pattern = "*GSB",full.names = T)
+precipitation_jun_to_nov <- list.files(path = precipitation_folder_path,pattern = "*GSB",full.names = T)
 
-# other dataset -----------------------------------------------------------
+# External Precipitation Datasets -----------------------------------------
 
-chirps_dataset <- read.csv(chirps_dataset_path,na.strings = c("NA",""," "),stringsAsFactors = F) %>% mutate(
-  date = dmy(system.time_start),
-  precipitataion_chirps = precipitation
-) %>% select(date,precipitataion_chirps)
+# CHIRPS dataset:
+chirps_dataset <- read.csv(chirps_dataset_path, na.strings = c("NA",""," "), stringsAsFactors = F)
 
-cfrs_dataset <- read.csv(cfsr_dataset_path,na.strings = c("NA",""," "),stringsAsFactors = F)
+# start_time <- Sys.time()
+# Sys.time()-start_time
+  # Convert dates to year-month-day format and rename precipitation:
+  chirps_dataset <- data.frame(date = dmy(chirps_dataset$system.time_start),
+                               precipitataion_chirps = chirps_dataset$precipitation)
 
+# CFRS dataset:
+cfrs_dataset <- read.csv(cfsr_dataset_path, na.strings = c("NA",""," "), stringsAsFactors = F)
+
+# What is this doing? Can we split it to be simpler?
 cfrs_dataset<- cfrs_dataset %>%
-  mutate(date= dmy(system.time_start),
-         mm= Precipitation_rate_surface_6_Hour_Average*(1/0.997)* 60*60*6,
-         tday= rep_len(c("00:00:00","06:00:00","12:00:00","18:00:00"),length.out = nrow(.)),
-         datetime_char= paste(date,tday),
-         datetime= ymd_hms(datetime_char)
+  # Create a new date column with desired format:
+  mutate(date = dmy(system.time_start),
+         # Why is there 1/0.997?
+         mm = Precipitation_rate_surface_6_Hour_Average*(1/0.997)* 60*60*6,
+         # What is the purpose of these columns? Are they used again?
+         timeofday = rep_len(c("00:00:00","06:00:00","12:00:00","18:00:00"), length.out = nrow(.)),
+         datetime = ymd_hms(paste(date,timeofday))
   ) %>%
-  with_tz("Asia/Dhaka") %>% dplyr::group_by(date) %>% dplyr::summarise(
-    precipitation_cfrs = sum(mm,na.rm=T)
-  )
+  # Assign time zone:
+  with_tz("Asia/Dhaka") %>%
+  # What does this do?
+  dplyr::group_by(date) %>% dplyr::summarise(precipitation_cfrs = sum(mm, na.rm=T))
 
-# precipitation -----------------------------------------------------------
 
+# Reformat the UNDP Rainfall Data -----------------------------------------
+
+# Collate the first half of 2020:
 precipitation_data_jan_to_may <- list()
 for (i in precipitation_jan_to_may) {
   precipitation_data_jan_to_may[[i]] <- read.csv(i,na.strings = c("NA",""," "))
 }
-precipitation_data_jan_to_may_combind <- do.call("bind_rows",precipitation_data_jan_to_may)
+precipitation_data_jan_to_may_combind <- do.call("bind_rows", precipitation_data_jan_to_may)
 
+# Collate the second half of 2020:
+precipitation_data_jun_to_nov <- list()
+rename_at_1 <- c("GSB.Cox.s.Bazaar", "GSB.Teknaf", "UN.Camp.16", "UN.Kuturc", "UN.Chakmarkul") 
+rename_to_1 <- c("GSB Cox's Bazaar-1227", "GSB Teknaf-1226", "UN Camp 16-1280","UN Kuturc-1279" ,"UN Chakmarkul-1278")
 
-precipitation_data_jun_to_aug <- list()
-for (z in precipitation_jun_to_aug) {
-  data <- read.csv(z,na.strings = c("NA",""," ")) %>% dplyr::select(-starts_with("X"))
+for (z in precipitation_jun_to_nov) {
+  # Filter out dud columns
+  data <- read.csv(z, na.strings = c("NA",""," ")) %>% dplyr::select(-starts_with("X"))
   
+  # Rename columns:
   data <- setnames(data, old = rename_at_1, new = rename_to_1)
   
-  precipitation_data_jun_to_aug[[z]] <- data %>% pivot_longer(!Date,names_to = "Device.name",values_to = "Value")
+  # Assign to list as a collapsed tibble:
+  precipitation_data_jun_to_nov[[z]] <- data %>% pivot_longer(!Date, names_to = "Device.name", values_to = "Value")
 }
-precipitation_data_jun_to_aug_combind <- do.call("bind_rows",precipitation_data_jun_to_aug)
 
-precipitation_combined_data <- bind_rows(precipitation_data_jan_to_may_combind,precipitation_data_jun_to_aug_combind) %>% 
+precipitation_data_jun_to_nov_combind <- do.call("bind_rows", precipitation_data_jun_to_nov)
+
+# Join the two halves of the year together and:
+precipitation_combined_data <- bind_rows(precipitation_data_jan_to_may_combind, precipitation_data_jun_to_nov_combind) %>% 
+  # Why are we having to use distinct?
   distinct()
 
-
+# Add date to the dataframe: (would perhaps be simpler to overwrite precipitation_combined_data to reduce the number of created variables)
 precipitation_combined_data_with_time_date <- precipitation_combined_data %>% mutate(
-  date_time = if_else(is.na(Date),ymd_hms(Time),dmy_hm(Date))
-) %>% dplyr::select(-Time,Date)
+  date_time = if_else(is.na(Date), ymd_hms(Time), dmy_hm(Date))
+) %>% dplyr::select(-Time, Date)
 
-problem_dates<-ymd(c("2020-04-29", "2020-04-30", "2020-05-03"))
+# plot_rainfall_origional = plot_ly(x = precipitation_combined_data_with_time_date$date_time, y= precipitation_combined_data_with_time_date$Value, mode = "lines", type = "scatter", color = precipitation_combined_data_with_time_date$Device.name)
 
-precipitation_combined_data_with_time_date<- precipitation_combined_data_with_time_date %>%
+# Why are there problem dates? How have you found these? If we run this again for 2021 then it is useful to know the reasoning behind this. Do we know who these are happening?
+problem_dates <- ymd(c("2020-04-29", "2020-04-30", "2020-05-03"))
+
+# Change anomalous values to NA: 
+precipitation_combined_data_with_time_date <- precipitation_combined_data_with_time_date %>%
   mutate(
-    only_date = as.Date(date_time),
     # Value=parse_number(Value),
-    Value=ifelse((only_date  %in% problem_dates)& (Value<10|Value>100000),NA,Value),
-    time_ts_round= floor_date(date_time, "15 mins")
-  ) %>% select(Device.name,time_ts_round,Value) %>% dplyr::group_by(Device.name,time_ts_round) %>% 
+    Value = ifelse((as.Date(date_time) %in% problem_dates) & (Value<10|Value>100000),NA,Value), # Why are we focussing on only 'problem dates', do not all values in this range want changing to NA?
+    # Round all times down to the nearest 15 minutes:
+    time_ts_round = floor_date(date_time, "15 mins")
+    # If there are multiple recordings within a 15 minute period, take the mean of these:
+  ) %>% select(Device.name, time_ts_round, Value) %>% dplyr::group_by(Device.name, time_ts_round) %>% 
   dplyr::summarise(
-    Value = mean(Value,na.rm = T)
+    Value = mean(Value,na.rm = T) # should we actually be taking the 1st of any duplicates, as this is the most appropriate value for the time?
   )
 
-precipitation_combined_data_with_time_date$Value <- na_if(x =  precipitation_combined_data_with_time_date$Value,y=0)
-precipitation_combined_data_with_time_date$Value <- if_else(is.nan(precipitation_combined_data_with_time_date$Value),NA_real_,
-                                                            precipitation_combined_data_with_time_date$Value)
+# plot_rainfall_NAed = plot_ly(x = precipitation_combined_data_with_time_date$time_ts_round, y= precipitation_combined_data_with_time_date$Value, mode = "lines", type = "scatter", color = precipitation_combined_data_with_time_date$Device.name)
 
+# subplot(plot_rainfall_origional, plot_rainfall_NAed, nrows = 1)
 
+precipitation_combined_data_with_time_date$Value <- na_if(x = precipitation_combined_data_with_time_date$Value, y = 0)
+precipitation_combined_data_with_time_date$Value <- if_else(condition = is.nan(x = precipitation_combined_data_with_time_date$Value),
+                                                            true = NA_real_,
+                                                            false =  precipitation_combined_data_with_time_date$Value)
+
+# Re-format the data into 15 minute intervals (non cumulative)
 precipitation_full_15_min_interval <- precipitation_combined_data_with_time_date %>% 
   dplyr::group_by(Device.name) %>% 
-  arrange(time_ts_round)  %>% dplyr::mutate(
+  arrange(time_ts_round) %>% dplyr::mutate(
   Interval = Value - lag(Value)
-)%>% ungroup() %>% select(c( "Device.name","time_ts_round","Interval"))
+) %>% ungroup() %>% select(c("Device.name","time_ts_round","Interval"))
 
-precipitation_full_15_min_interval$Interval <- if_else(precipitation_full_15_min_interval$Interval < 0 , 0, precipitation_full_15_min_interval$Interval, NULL)
+# Remove negative values:
+# precipitation_full_15_min_interval$Interval[precipitation_full_15_min_interval$Interval<0] = 0 # Potentially simpler
+precipitation_full_15_min_interval$Interval <- if_else(precipitation_full_15_min_interval$Interval < 0, 0, precipitation_full_15_min_interval$Interval, NULL)
 
 # precipitation_full_15_min_interval<-precipitation_data_with_interval %>% 
 #   mutate(
@@ -109,23 +148,24 @@ precipitation_full_15_min_interval$Interval <- if_else(precipitation_full_15_min
 #   ) %>% ungroup() %>% select(c( "Device.name","time_ts_round","Interval", ))
 
 
-# pivot wider 15 min  ------------------------------------------------------------- 
 
+# Format UNDP rainfall dataset with columns for each gauge ---------------
 
 pre_15_min_interval_final <- precipitation_full_15_min_interval %>% pivot_wider(names_from = Device.name ,
-                                                                                names_prefix="interval.",
+                                                                                names_prefix ="interval.",
                                                                                 values_from = Interval,
-                                                                                 values_fn = sum)
+                                                                                values_fn = sum) # This isn't very final, should we carry on overwriting things until the actual final below?
+
+# Ensure that all 15 minute timesteps are filled:
+datetime_sequence <- data.frame(
+  time_date = seq(min(pre_15_min_interval_final$time_ts_round),
+                  max(pre_15_min_interval_final$time_ts_round),
+                  by="15 min"))
+
+precipitation_with_all_date_time <- datetime_sequence %>% left_join(pre_15_min_interval_final, by=c("time_date"="time_ts_round"))
 
 
 # 3 hr max_15_min_interval ----------------------------------------------------------------
-
-# Generate a time series of 15 minute steps for duration of UNDP Rainfall data:
-datetime_sequence<-data.frame(
-  time_date =seq(min(pre_15_min_interval_final$time_ts_round),
-                 max(pre_15_min_interval_final$time_ts_round), by="15 min"))
-
-precipitation_with_all_date_time <- datetime_sequence %>% left_join(pre_15_min_interval_final,by=c("time_date"="time_ts_round"))
 
 precipitation_with_all_date_time_pivot_longer <- precipitation_with_all_date_time %>% 
   pivot_longer(!time_date,names_to="Device.name" , values_to = "Interval" )
