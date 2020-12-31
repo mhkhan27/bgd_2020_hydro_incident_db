@@ -164,7 +164,7 @@ precipitation_full_15_min_interval$Interval <- if_else(precipitation_full_15_min
 #   mutate(
 #     # time_ts=precipitation_full3$Time  %>% dmy_hm(),
 #     time_ts_round= floor_date(date_time, "15 mins")
-#   ) %>% ungroup() %>% select(c( "Device.name","time_ts_round","Interval", ))
+#   ) %>% ungroup() %>% select(c("Device.name","time_ts_round","Interval", ))
 
 
 
@@ -226,25 +226,34 @@ precipitation_3hr_totals =  fill_NA(df = precipitation_with_all_date_time[,2:5],
 precipitation_3hr_totals = rollsum(x = precipitation_3hr_totals, k = 12, 
                                    na.pad = TRUE, align = "right", na.rm = FALSE)
 
-precipitation_3hr_totals = data.frame(Date=precipitation_with_all_date_time$time_date, precipitation_3hr_totals)
+precipitation_3hr_totals = data.frame(date=precipitation_with_all_date_time$time_date, precipitation_3hr_totals)
 # This could be added to the precipitation_with_all_date_time instead
 
 
-# daily_summary -----------------------------------------------------------
+# Create daily rainfall summary data --------------------------------------
 
-daily_summary_precipitation <- precip_roll_max  %>% dplyr::group_by(date, Device.name) %>% dplyr::summarise(
-  interval = if_else(all(is.na(Interval)),NA_real_,sum(Interval,na.rm = T)),
-  max_3_hr_interval = if_else(all(is.na(max_3_hour)),NA_real_,max(max_3_hour,na.rm=T))
-)
+# Because I changed the above, the next bit of code didn't work. I edited, but not sure which is best, my version or the origional.
+# daily_summary_precipitation <- precip_roll_max  %>% dplyr::group_by(date, Device.name) %>% dplyr::summarise(
+#   interval = if_else(all(is.na(Interval)), NA_real_, sum(Interval,na.rm = T)),
+#   max_3_hr_interval = if_else(all(is.na(max_3_hour)), NA_real_, max(max_3_hour,na.rm=T))
+# )
+# 
+# daily_summary_precipitation$max_3_hr_interval <- if_else(is.na(daily_summary_precipitation$interval),
+#                                                          NA_real_,
+#                                                          daily_summary_precipitation$max_3_hr_interval)
+# 
+# preci_data_full_summary <- daily_summary_precipitation %>% 
+#   pivot_wider(names_from = Device.name,names_sep = ".",values_from = c("interval","max_3_hr_interval"))
 
-daily_summary_precipitation$max_3_hr_interval <- if_else(is.na(daily_summary_precipitation$interval),
-                                                         NA_real_,
-                                                         daily_summary_precipitation$max_3_hr_interval)
+daily_summary_precipitation = suppressWarnings(
+  aggregate(x = precipitation_3hr_totals[,2:5],
+            by = list(as.Date(precipitation_3hr_totals[,1])),
+            FUN = "max", na.rm=TRUE, na.action=NULL)) # warnings are suppressed as is has issues with NA - there is probably a better way of doing this. The warnings aren't an issue as far as I can tell.
 
-preci_data_full_summary <- daily_summary_precipitation %>% 
-  pivot_wider(names_from = Device.name,names_sep = ".",values_from = c("interval","max_3_hr_interval"))
+# Replace Inf with NAs:
+daily_summary_precipitation[sapply(daily_summary_precipitation, is.infinite)] <- NA
 
-preci_data_full_summary[sapply(preci_data_full_summary, is.infinite)] <- NA
+# preci_data_full_summary[sapply(preci_data_full_summary, is.infinite)] <- NA
 
 # incident ----------------------------------------------------------------
 include_list <- c( "Flood", "Slope-failure","Wind-Storm")
