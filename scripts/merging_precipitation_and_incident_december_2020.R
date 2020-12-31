@@ -17,6 +17,25 @@ library(lubridate)
 library(tidyquant)
 library(ggplot2)
 
+# Set up function for filling NA gaps:
+fill_NA = function(df, gap, fill_value){
+  
+  # If there are non-NA values within the gap then fill_value will replace the NA value.
+  # Find row,col indexes of NA values
+  NA_values = which(is.na(df), arr.ind = T)
+  
+  for(i in nrow(NA_values):1){
+    
+    r1 = NA_values[i,1]
+    r2 = max(1, NA_values[i,1]-gap)
+    c = NA_values[i,2]
+    
+    df[r,c] = ifelse(test = any(!is.na(t[r2:r1,c])), yes = fill_value, no = NA)
+  }
+  
+  return(df)
+}
+
 # Load in the paths to the input data sources:
 source("scripts/path.R")
 
@@ -167,34 +186,53 @@ precipitation_with_all_date_time <- datetime_sequence %>% left_join(pre_15_min_i
 
 # 3 hr max_15_min_interval ----------------------------------------------------------------
 
-precipitation_with_all_date_time_pivot_longer <- precipitation_with_all_date_time %>% 
-  pivot_longer(!time_date,names_to="Device.name" , values_to = "Interval" )
+# THIS DID NOT WORK SO I HAVE SUGGESTED (SIMPLER?) ALTERNATIVE BELOW
 
-precipitation_with_all_date_time_pivot_longer <- precipitation_with_all_date_time_pivot_longer %>% filter(
-  time_date < max(time_date)
-)#remove last date, so rolling max has full 24 hr for each day
-precip_roll_max<- precipitation_with_all_date_time_pivot_longer %>% 
- mutate(
-    date = as.Date(time_date)) %>% 
-  group_by(Device.name,date) %>% 
-  tq_mutate(
-    # tq_mutate args
-    select     = Interval,
-    mutate_fun = rollapply, 
-    # rollapply args
-    width      = 12,
-    align      = "right",
-    FUN        = sum,
-    # mean args
-    na.rm      = TRUE,
-    # tq_mutate args
-    col_rename = "max_3_hour"
-  ) %>% dplyr::select(-time_date..1)
+# precipitation_with_all_date_time_pivot_longer <- precipitation_with_all_date_time %>% 
+#   pivot_longer(!time_date,names_to="Device.name" , values_to = "Interval" )
+# 
+# precipitation_with_all_date_time_pivot_longer <- precipitation_with_all_date_time_pivot_longer %>% filter(
+#   time_date < max(time_date)
+# )#remove last date, so rolling max has full 24 hr for each day
+# precip_roll_max<- precipitation_with_all_date_time_pivot_longer %>% 
+#  mutate(
+#     date = as.Date(time_date)) %>% 
+#   group_by(Device.name,date) %>% 
+#   tq_mutate(
+#     # tq_mutate args
+#     select     = Interval,
+#     mutate_fun = rollapply, 
+#     # rollapply args
+#     width      = 12,
+#     align      = "right",
+#     FUN        = sum,
+#     # mean args
+#     na.rm      = TRUE,
+#     # tq_mutate args
+#     col_rename = "max_3_hour"
+#   ) %>% dplyr::select(-time_date..1)
+
+
+# Create 3hr rainfall totals that will be used in daily data --------------
+  # NAs in consecutive lengths less than 12 are treated as 0s.
+  # 12 or more consecutive NAs return NA 3hr totals.
+# library(zoo)
+
+# Fill NA gaps less than 3hrs long with 0s so that they're included in the 3hr totals. 
+precipitation_3hr_totals =  fill_NA(df = precipitation_with_all_date_time[,2:5],
+                                    gap = 11, fill_value = 0) # This is slow - there must be a better method, but I do not know it yet... I think that it needs to be done, else we are loosing 3hrs of data if there is 1 NA value in a 3hr window.
+
+# Calculate moving totals
+precipitation_3hr_totals = rollsum(x = precipitation_3hr_totals, k = 12, 
+                                   na.pad = TRUE, align = "right", na.rm = FALSE)
+
+precipitation_3hr_totals = data.frame(Date=precipitation_with_all_date_time$time_date, precipitation_3hr_totals)
+# This could be added to the precipitation_with_all_date_time instead
 
 
 # daily_summary -----------------------------------------------------------
 
-daily_summary_precipitation <- precip_roll_max  %>% dplyr::group_by(date,Device.name) %>% dplyr::summarise(
+daily_summary_precipitation <- precip_roll_max  %>% dplyr::group_by(date, Device.name) %>% dplyr::summarise(
   interval = if_else(all(is.na(Interval)),NA_real_,sum(Interval,na.rm = T)),
   max_3_hr_interval = if_else(all(is.na(max_3_hour)),NA_real_,max(max_3_hour,na.rm=T))
 )
