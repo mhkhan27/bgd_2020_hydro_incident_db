@@ -1,4 +1,11 @@
-rm (list = ls())
+# Hydro-Meteorological Database
+# Data Merge Script
+# Natural Hazards TWG 
+# December 2020
+
+# This script takes hydro-meteorological data and combines it with incident reports from the Bangladesh refugee camps to produce a single dataset.
+
+# Preamble ----------------------------------------------------------------
 
 library(rlang)
 library(dplyr)
@@ -9,266 +16,299 @@ library(data.table)
 library(lubridate)
 library(tidyquant)
 library(ggplot2)
-source("scripts/path.R") #read all the path
 
-weather_data <- c(T,F)[2] # To define either we have weather dataset(MSF8w and SMEP-Hub) or not
-BMD_data <- c(T,F)[2]  # To define either we have BMD dataset or not
-other_dataset <- c(T,F)[1] # To define either we have other dataset (CHIRPS and CFRS ) or not
+# Set up function for filling NA gaps:
+fill_NA = function(df, gap, fill_value){
+  
+  # If there are non-NA values within the gap then fill_value will replace the NA value.
+  # Find row,col indexes of NA values
+  NA_values = which(is.na(df), arr.ind = T)
+  
+  for(i in nrow(NA_values):1){
+    
+    r1 = NA_values[i,1]
+    r2 = max(1, NA_values[i,1]-gap)
+    c = NA_values[i,2]
+    
+    df[r,c] = ifelse(test = any(!is.na(t[r2:r1,c])), yes = fill_value, no = NA)
+  }
+  
+  return(df)
+}
 
+# Load in the paths to the input data sources:
+source("scripts/path.R")
 
-rename_at_1 <- c("GSB.Cox.s.Bazaar", "GSB.Teknaf", "UN.Camp.16", "UN.Kuturc", 
-                 "UN.Chakmarkul") #to rename the columns
-rename_to_1 <- c("GSB Cox's Bazaar-1227", 
-                 "GSB Teknaf-1226", "UN Camp 16-1280","UN Kuturc-1279" ,"UN Chakmarkul-1278")#to rename the columns
+# Set up function for formatting dates:
+clean_round_date<-function(df, date_column){
+  df$clean_floored_date<-df[[date_column]] %>% trimws() %>% dmy_hm() %>% floor_date("15 mins")
+}
 
 cols_needed_for_indicent <-   c("Date.of.assessment", "Date.of.incident",
                                 "Type.of.incident", 
                                 "Number.of.incidents", "Affected.HHs", 
                                 "Affected.individuals", "Casualties..ind.", "Missing.ind", "Injured.ind", 
                                 "Displaced.HH", "Displaced.ind",
-                                "Partially.Damaged.shelters", "Totally.Damaged.shelters") # to subset the necessary column from incident dataset
+                                "Partially.Damaged.shelters", "Totally.Damaged.shelters")
 
-# File location 
+# Precipitation file structure changed in June. List the two groups of files: 
 precipitation_jan_to_may <- list.files(path = precipitation_folder_path,pattern = "*reporting",full.names = T)
-precipitation_jun_to_end <- list.files(path = precipitation_folder_path,pattern = "*GSB",full.names = T)
+precipitation_jun_to_nov <- list.files(path = precipitation_folder_path,pattern = "*GSB",full.names = T)
 
+# External Precipitation Datasets -----------------------------------------
 
-# CHIRPS and CFRS dataset -----------------------------------------------------------
+# CHIRPS dataset:
+chirps_dataset <- read.csv(chirps_dataset_path, na.strings = c("NA",""," "), stringsAsFactors = F)
 
-# CHIRPS and CFRS dataset is downloaded from google earth enginee. you can find the script here -
-#https://code.earthengine.google.com/?accept_repo=users%2Fzackarno%2Fdefault&scriptPath=users%2Fzackarno%2Fdefault%3ABangladesh%2Fget_historical_precip
-#you will need a google earth enginee account to run the code
+# start_time <- Sys.time()
+# Sys.time()-start_time
+# Convert dates to year-month-day format and rename precipitation:
+chirps_dataset <- data.frame(date = dmy(chirps_dataset$system.time_start),
+                             precipitataion_chirps = chirps_dataset$precipitation)
 
-if(other_dataset ==T){
-  
-chirps_dataset <- read.csv(chirps_dataset_path,na.strings = c("NA",""," "),stringsAsFactors = F) %>% mutate(
-  date = anytime::anydate(system.time_start),
-  precipitataion_chirps = precipitation ) %>% select(date,precipitataion_chirps)
+# CFRS dataset:
+cfrs_dataset <- read.csv(cfsr_dataset_path, na.strings = c("NA",""," "), stringsAsFactors = F)
 
-cfrs_dataset <- read.csv(cfsr_dataset_path,na.strings = c("NA",""," "),stringsAsFactors = F)
-
-
-#CFRS data are exported in ERA-Interim so it need to be converted into mm (for water 1l=.997kg (at 25 Degree temperature) because of water density)
-# tday and with_tz(Aisha/Dhaka) lines are only for understanding how we have the cfsr data. you can ignore these lines.  
-# And the it calculate per day precipitation in mm 
+# What is this doing? Can we split it to be simpler?
 cfrs_dataset<- cfrs_dataset %>%
-  mutate(date= anytime::anydate(system.time_start),
-         mm= Precipitation_rate_surface_6_Hour_Average*(1/0.997)* 60*60*6,
-         tday= rep_len(c("00:00:00","06:00:00","12:00:00","18:00:00"),length.out = nrow(.)),
-         datetime_char= paste(date,tday),
-         datetime= ymd_hms(datetime_char)
+  # Create a new date column with desired format:
+  mutate(date = dmy(system.time_start),
+         # Why is there 1/0.997?
+         mm = Precipitation_rate_surface_6_Hour_Average*(1/0.997)* 60*60*6,
+         # What is the purpose of these columns? Are they used again?
+         timeofday = rep_len(c("00:00:00","06:00:00","12:00:00","18:00:00"), length.out = nrow(.)),
+         datetime = ymd_hms(paste(date,timeofday))
   ) %>%
-  with_tz("Asia/Dhaka") %>% dplyr::group_by(date) %>% dplyr::summarise(
-    precipitation_cfrs = sum(mm,na.rm=T)
-  )
-}
-# precipitation -----------------------------------------------------------
+  # Assign time zone:
+  with_tz("Asia/Dhaka") %>%
+  # What does this do?
+  dplyr::group_by(date) %>% dplyr::summarise(precipitation_cfrs = sum(mm, na.rm=T))
 
-#read_precipitation data from january to may
+
+# Reformat the UNDP Rainfall Data -----------------------------------------
+
+# Collate the first half of 2020:
 precipitation_data_jan_to_may <- list()
 for (i in precipitation_jan_to_may) {
   precipitation_data_jan_to_may[[i]] <- read.csv(i,na.strings = c("NA",""," "))
 }
+precipitation_data_jan_to_may_combind <- do.call("bind_rows", precipitation_data_jan_to_may)
 
-#combind precipitation data from jan to may into one dataset
-precipitation_data_jan_to_may_combind <- do.call("bind_rows",precipitation_data_jan_to_may) 
+# Collate the second half of 2020:
+precipitation_data_jun_to_nov <- list()
+rename_at_1 <- c("GSB.Cox.s.Bazaar", "GSB.Teknaf", "UN.Camp.16", "UN.Kuturc", "UN.Chakmarkul") 
+rename_to_1 <- c("GSB Cox's Bazaar-1227", "GSB Teknaf-1226", "UN Camp 16-1280","UN Kuturc-1279" ,"UN Chakmarkul-1278")
 
-
-#read_precipitation data from Jun to end date
-precipitation_data_jun_to_end<- list()
-for (z in precipitation_jun_to_end) {
-  data <- read.csv(z,na.strings = c("NA",""," ")) %>% dplyr::select(-starts_with("X"))
+for (z in precipitation_jun_to_nov) {
+  # Filter out dud columns
+  data <- read.csv(z, na.strings = c("NA",""," ")) %>% dplyr::select(-starts_with("X"))
   
+  # Rename columns:
   data <- setnames(data, old = rename_at_1, new = rename_to_1)
   
-  precipitation_data_jun_to_end[[z]] <- data %>% pivot_longer(!Date,names_to = "Device.name",values_to = "Value")
+  # Assign to list as a collapsed tibble:
+  precipitation_data_jun_to_nov[[z]] <- data %>% pivot_longer(!Date, names_to = "Device.name", values_to = "Value")
 }
 
-#combind precipitation data from jun to last one into one dataset
-precipitation_data_jun_to_end_combind <- do.call("bind_rows",precipitation_data_jun_to_end) 
+precipitation_data_jun_to_nov_combind <- do.call("bind_rows", precipitation_data_jun_to_nov)
 
+# Join the two halves of the year together and:
+precipitation_combined_data <- bind_rows(precipitation_data_jan_to_may_combind, precipitation_data_jun_to_nov_combind) %>% 
+  # Why are we having to use distinct?
+  distinct()
 
-#combind jan to may precipitation data with jun to end date (currently nov) precipitation data 
-# And remove duplicates (using distinct() for this) observations
-precipitation_combined_data <- bind_rows(precipitation_data_jan_to_may_combind,precipitation_data_jun_to_end_combind) %>% 
-  distinct() 
-
-# fix data_time formate, in dataset they are reported in 2 ways 
+# Add date to the dataframe: (would perhaps be simpler to overwrite precipitation_combined_data to reduce the number of created variables)
 precipitation_combined_data_with_time_date <- precipitation_combined_data %>% mutate(
-  date_time = if_else(is.na(Date),ymd_hms(Time),dmy_hm(Date))
-) %>% dplyr::select(-Time,-Date) 
+  date_time = if_else(is.na(Date), ymd_hms(Time), dmy_hm(Date))
+) %>% dplyr::select(-Time, Date)
 
-# Identify problematic days. some data for these days are wrong
-problem_dates<-ymd(c("2020-04-29", "2020-04-30", "2020-05-03")) 
+# plot_rainfall_origional = plot_ly(x = precipitation_combined_data_with_time_date$date_time, y= precipitation_combined_data_with_time_date$Value, mode = "lines", type = "scatter", color = precipitation_combined_data_with_time_date$Device.name)
 
+# Why are there problem dates? How have you found these? If we run this again for 2021 then it is useful to know the reasoning behind this. Do we know who these are happening?
+problem_dates <- ymd(c("2020-04-29", "2020-04-30", "2020-05-03"))
 
-
-precipitation_combined_data_with_time_date<- precipitation_combined_data_with_time_date %>%
+# Change anomalous values to NA: 
+precipitation_combined_data_with_time_date <- precipitation_combined_data_with_time_date %>%
   mutate(
-    only_date = as.Date(date_time),
-    # make wrong value to NA. 
-    # we are focusing only problem dates as for other case it is possible to have more than 10000 value (in future) and less than 10 (as sometime UNDP reset the device). 
-    # Currently in problems dates, more than 10000 and and less then 10 is very unrealistics. 
-    # We needed to check the data manually before start working. so next year we should fist check the data for each device  
-    Value=ifelse((only_date  %in% problem_dates)& (Value<10|Value>100000),NA,Value), 
+    # Value=parse_number(Value),
+    Value = ifelse((as.Date(date_time) %in% problem_dates) & (Value<10|Value>100000),NA,Value), # Why are we focussing on only 'problem dates', do not all values in this range want changing to NA?
     # Round all times down to the nearest 15 minutes:
-    time_ts_round= floor_date(date_time, "15 mins")
-  ) %>% select(Device.name,time_ts_round,Value) %>% dplyr::group_by(Device.name,time_ts_round) %>% 
+    time_ts_round = floor_date(date_time, "15 mins")
+    # If there are multiple recordings within a 15 minute period, take the mean of these:
+  ) %>% select(Device.name, time_ts_round, Value) %>% dplyr::group_by(Device.name, time_ts_round) %>% 
   dplyr::summarise(
-    Value = mean(Value,na.rm = T)
-  ) 
+    Value = mean(Value,na.rm = T) # should we actually be taking the 1st of any duplicates, as this is the most appropriate value for the time?
+  )
 
-#precipitation_combined_data_with_time_date$Value <- na_if(x =  precipitation_combined_data_with_time_date$Value,y=0)
+# plot_rainfall_NAed = plot_ly(x = precipitation_combined_data_with_time_date$time_ts_round, y= precipitation_combined_data_with_time_date$Value, mode = "lines", type = "scatter", color = precipitation_combined_data_with_time_date$Device.name)
 
-#make Nan to Na.I had to do this because when all values are NA for a specific time than mean value comes NaN
-precipitation_combined_data_with_time_date$Value <- if_else(is.nan(precipitation_combined_data_with_time_date$Value),NA_real_,
-                                                            precipitation_combined_data_with_time_date$Value)
+# subplot(plot_rainfall_origional, plot_rainfall_NAed, nrows = 1)
+
+precipitation_combined_data_with_time_date$Value <- na_if(x = precipitation_combined_data_with_time_date$Value, y = 0)
+precipitation_combined_data_with_time_date$Value <- if_else(condition = is.nan(x = precipitation_combined_data_with_time_date$Value),
+                                                            true = NA_real_,
+                                                            false =  precipitation_combined_data_with_time_date$Value)
 
 # Re-format the data into 15 minute intervals (non cumulative)
 precipitation_full_15_min_interval <- precipitation_combined_data_with_time_date %>% 
   dplyr::group_by(Device.name) %>% 
-  arrange(time_ts_round)  %>% dplyr::mutate(
-  Interval = Value - lag(Value)
-)%>% ungroup() %>% select(c( "Device.name","time_ts_round","Interval"))
+  arrange(time_ts_round) %>% dplyr::mutate(
+    Interval = Value - lag(Value)
+  ) %>% ungroup() %>% select(c("Device.name","time_ts_round","Interval"))
 
-#remove negetive value
-precipitation_full_15_min_interval$Interval <- if_else(precipitation_full_15_min_interval$Interval < 0 , 0, precipitation_full_15_min_interval$Interval, NULL)
+# Remove negative values:
+# precipitation_full_15_min_interval$Interval[precipitation_full_15_min_interval$Interval<0] = 0 # Potentially simpler
+precipitation_full_15_min_interval$Interval <- if_else(precipitation_full_15_min_interval$Interval < 0, 0, precipitation_full_15_min_interval$Interval, NULL)
 
 # precipitation_full_15_min_interval<-precipitation_data_with_interval %>% 
 #   mutate(
 #     # time_ts=precipitation_full3$Time  %>% dmy_hm(),
 #     time_ts_round= floor_date(date_time, "15 mins")
-#   ) %>% ungroup() %>% select(c( "Device.name","time_ts_round","Interval", ))
+#   ) %>% ungroup() %>% select(c("Device.name","time_ts_round","Interval", ))
 
 
-# pivot wider 15 min  ------------------------------------------------------------- 
 
+# Format UNDP rainfall dataset with columns for each gauge ---------------
 
-pre_15_min_interval <- precipitation_full_15_min_interval %>% pivot_wider(names_from = Device.name ,
-                                                                                names_prefix="interval.",
+pre_15_min_interval_final <- precipitation_full_15_min_interval %>% pivot_wider(names_from = Device.name ,
+                                                                                names_prefix ="interval.",
                                                                                 values_from = Interval,
-                                                                                 values_fn = sum)
-
-
+                                                                                values_fn = sum) # This isn't very final, should we carry on overwriting things until the actual final below?
 
 # Ensure that all 15 minute timesteps are filled:
-datetime_sequence<-data.frame(
-  time_date =seq(min(pre_15_min_interval$time_ts_round) ,
-                 max(pre_15_min_interval$time_ts_round), 
-                 by="15 min")
-)
+datetime_sequence <- data.frame(
+  time_date = seq(min(pre_15_min_interval_final$time_ts_round),
+                  max(pre_15_min_interval_final$time_ts_round),
+                  by="15 min"))
+
+precipitation_with_all_date_time <- datetime_sequence %>% left_join(pre_15_min_interval_final, by=c("time_date"="time_ts_round"))
+
 
 # 3 hr max_15_min_interval ----------------------------------------------------------------
 
-# Join precipitation interval with time sequence to ensure all timesteps are exist in dataset 
-precipitation_with_all_date_time <- datetime_sequence %>% left_join(pre_15_min_interval,by=c("time_date"="time_ts_round"))
+# THIS DID NOT WORK SO I HAVE SUGGESTED (SIMPLER?) ALTERNATIVE BELOW
 
-precipitation_with_all_date_time_pivot_longer <- precipitation_with_all_date_time %>% 
-  pivot_longer(!time_date,names_to="Device.name" , values_to = "Interval" )
-
-#remove last date, so each day has full 24 hr data
-precipitation_with_all_date_time_pivot_longer <- precipitation_with_all_date_time_pivot_longer %>% filter(
-  time_date < max(as.Date(time_date))
-)
-
-# calculate rolling sum for each 3 hour
-precip_roll_sum<- precipitation_with_all_date_time_pivot_longer %>% 
- mutate(
-    date = as.Date(time_date)) %>% 
-  group_by(Device.name,date) %>% 
-  tq_mutate(
-    # tq_mutate args
-    select     = Interval,
-    mutate_fun = rollapply, 
-    # rollapply args
-    width      = 12,
-    align      = "right",
-    FUN        = sum,
-    # mean args
-    na.rm      = T,
-    # tq_mutate args
-    col_rename = "max_3_hour"
-  ) %>% dplyr::select(-time_date..1)
+# precipitation_with_all_date_time_pivot_longer <- precipitation_with_all_date_time %>% 
+#   pivot_longer(!time_date,names_to="Device.name" , values_to = "Interval" )
+# 
+# precipitation_with_all_date_time_pivot_longer <- precipitation_with_all_date_time_pivot_longer %>% filter(
+#   time_date < max(time_date)
+# )#remove last date, so rolling max has full 24 hr for each day
+# precip_roll_max<- precipitation_with_all_date_time_pivot_longer %>% 
+#  mutate(
+#     date = as.Date(time_date)) %>% 
+#   group_by(Device.name,date) %>% 
+#   tq_mutate(
+#     # tq_mutate args
+#     select     = Interval,
+#     mutate_fun = rollapply, 
+#     # rollapply args
+#     width      = 12,
+#     align      = "right",
+#     FUN        = sum,
+#     # mean args
+#     na.rm      = TRUE,
+#     # tq_mutate args
+#     col_rename = "max_3_hour"
+#   ) %>% dplyr::select(-time_date..1)
 
 
-# daily_summary -----------------------------------------------------------
+# Create 3hr rainfall totals that will be used in daily data --------------
+# NAs in consecutive lengths less than 12 are treated as 0s.
+# 12 or more consecutive NAs return NA 3hr totals.
+# library(zoo)
 
-# calculate daily precipitation in mm and Maximum Sum of 3 hr precipitation in mm
-daily_summary_precipitation <- precip_roll_sum  %>% dplyr::group_by(date,Device.name) %>% dplyr::summarise(
-  interval = if_else(all(is.na(Interval)),NA_real_,sum(Interval,na.rm = T)),
-  max_3_hr_interval = if_else(all(is.na(max_3_hour)),NA_real_,max(max_3_hour,na.rm=T))
-)
+# Fill NA gaps less than 3hrs long with 0s so that they're included in the 3hr totals. 
+precipitation_3hr_totals =  fill_NA(df = precipitation_with_all_date_time[,2:5],
+                                    gap = 11, fill_value = 0) # This is slow - there must be a better method, but I do not know it yet... I think that it needs to be done, else we are loosing 3hrs of data if there is 1 NA value in a 3hr window.
 
-daily_summary_precipitation$max_3_hr_interval <- if_else(is.na(daily_summary_precipitation$interval),
-                                                         NA_real_, daily_summary_precipitation$max_3_hr_interval)
-# make rolling 3 hr sum NA from 0 (initially in the daily summary 3hr rolling sum is 0 when all the values are NA for a certain day(as we used na.rm ==T during rolling sum calculation))
-preci_data_full_summary <- daily_summary_precipitation %>% 
-  pivot_wider(names_from = Device.name,names_sep = ".",values_from = c("interval","max_3_hr_interval"))
+# Calculate moving totals
+precipitation_3hr_totals = rollsum(x = precipitation_3hr_totals, k = 12, 
+                                   na.pad = TRUE, align = "right", na.rm = FALSE)
+
+precipitation_3hr_totals = data.frame(date=precipitation_with_all_date_time$time_date, precipitation_3hr_totals)
+# This could be added to the precipitation_with_all_date_time instead
+
+
+# Create daily rainfall summary data --------------------------------------
+
+# Because I changed the above, the next bit of code didn't work. I edited, but not sure which is best, my version or the origional.
+# daily_summary_precipitation <- precip_roll_max  %>% dplyr::group_by(date, Device.name) %>% dplyr::summarise(
+#   interval = if_else(all(is.na(Interval)), NA_real_, sum(Interval,na.rm = T)),
+#   max_3_hr_interval = if_else(all(is.na(max_3_hour)), NA_real_, max(max_3_hour,na.rm=T))
+# )
+# 
+# daily_summary_precipitation$max_3_hr_interval <- if_else(is.na(daily_summary_precipitation$interval),
+#                                                          NA_real_,
+#                                                          daily_summary_precipitation$max_3_hr_interval)
+# 
+# preci_data_full_summary <- daily_summary_precipitation %>% 
+#   pivot_wider(names_from = Device.name,names_sep = ".",values_from = c("interval","max_3_hr_interval"))
+
+daily_summary_precipitation = suppressWarnings(
+  aggregate(x = precipitation_3hr_totals[,2:5],
+            by = list(as.Date(precipitation_3hr_totals[,1])),
+            FUN = "max", na.rm=TRUE, na.action=NULL)) # warnings are suppressed as is has issues with NA - there is probably a better way of doing this. The warnings aren't an issue as far as I can tell.
 
 # Replace Inf with NAs:
-preci_data_full_summary[sapply(preci_data_full_summary, is.infinite)] <- NA
+daily_summary_precipitation[sapply(daily_summary_precipitation, is.infinite)] <- NA
+
+# preci_data_full_summary[sapply(preci_data_full_summary, is.infinite)] <- NA
 
 # incident ----------------------------------------------------------------
-
-# list all hazard that need to added in hydro-incidednt dataset
 include_list <- c( "Flood", "Slope-failure","Wind-Storm")
 
-#read incident report from 2019 to june 2020
 incident_report_raw_2019_to_062020 <- read.csv(incident_report_file_path_04_2019_to_062020,na.strings = c("NA",""," ")) %>% 
   dplyr::select(cols_needed_for_indicent) %>% dplyr::select(-contains("ind")) %>% filter(Type.of.incident %in% include_list)
 
-#read incident report from Jan 2020 to Nov 2020
 incident_report_raw_jan_to_nov_2020 <- read.csv(incident_report_file_path_jan_2020_to_nov_2020,na.strings = c("NA",""," ")) %>% 
   dplyr::select(cols_needed_for_indicent) %>% dplyr::select(-contains("ind")) %>% filter(Type.of.incident %in% include_list)
 
-#Fix date formate
+
 incident_report_raw_2019_to_062020$Date.of.assessment <- incident_report_raw_2019_to_062020$Date.of.assessment %>% dmy() %>% as.Date()
 incident_report_raw_jan_to_nov_2020$Date.of.assessment <- incident_report_raw_jan_to_nov_2020$Date.of.assessment  %>% dmy() %>% as.Date()
 
 incident_report_raw_2019_to_062020$Date.of.incident <- incident_report_raw_2019_to_062020$Date.of.incident %>% dmy() %>% as.Date()
 incident_report_raw_jan_to_nov_2020$Date.of.incident <- incident_report_raw_jan_to_nov_2020$Date.of.incident %>% dmy()%>% as.Date()
 
-# Make sure all date of incidents are recorded.( if date of incident report is missing than we assumed date of incident and date of assessment)
-incident_report_raw_2019_to_062020$Date.of.incident <- if_else(is.na(incident_report_raw_2019_to_062020$Date.of.incident),
+
+incident_report_raw_2019_to_062020$Date.of.assessment <- if_else(is.na(incident_report_raw_2019_to_062020$Date.of.incident),
                                                                  incident_report_raw_2019_to_062020$Date.of.assessment,
                                                                  incident_report_raw_2019_to_062020$Date.of.incident)
 
 
 
-incident_report_raw_jan_to_nov_2020$Date.of.incident <- if_else(is.na(incident_report_raw_jan_to_nov_2020$Date.of.incident),
+incident_report_raw_jan_to_nov_2020$Date.of.assessment <- if_else(is.na(incident_report_raw_jan_to_nov_2020$Date.of.incident),
                                                                   incident_report_raw_jan_to_nov_2020$Date.of.assessment,
                                                                   incident_report_raw_jan_to_nov_2020$Date.of.incident)
 
-# remove 2020s data from 2019 data
+
 incident_report_raw_2019 <- incident_report_raw_2019_to_062020%>% 
-  filter(Date.of.incident<as.Date("2020/01/01"))
+  filter(Date.of.assessment<as.Date("2020/01/01"))
 
-#just for checking the dates 
-incident_report_raw_2019$Date.of.incident %>% max()
-incident_report_raw_jan_to_nov_2020$Date.of.incident %>% min()
+incident_report_raw_2019$Date.of.assessment %>% max()
+incident_report_raw_jan_to_nov_2020$Date.of.assessment %>% min()
 
-# Merge 2019 and 2020 data 
+
 incident_report_raw <- bind_rows(incident_report_raw_2019,incident_report_raw_jan_to_nov_2020) %>% 
-  select(-Date.of.assessment)
+  select(-Date.of.incident)
 
-# Formate and summarise the incidents by each day 
+
 incident_pivot_wider <- incident_report_raw %>% 
   pivot_wider(names_from = Type.of.incident ,values_from = c("Number.of.incidents", 
-                "Affected.HHs", "Displaced.HH", "Partially.Damaged.shelters", 
-                 "Totally.Damaged.shelters"), names_sep = "_",values_fn = sum)  %>% filter(!is.na(Date.of.incident))
+                                                             "Affected.HHs", "Displaced.HH", "Partially.Damaged.shelters", 
+                                                             "Totally.Damaged.shelters"), names_sep = "_",values_fn = sum)  %>% filter(!is.na(Date.of.assessment))
 
-incident_report<- incident_pivot_wider %>% group_by(Date.of.incident) %>%summarise_each(funs(sum(., na.rm = TRUE)))
-incident_report$Date <- incident_report$Date.of.incident
-incident_report <- incident_report %>% select(-Date.of.incident)
+incident_report<- incident_pivot_wider %>% group_by(Date.of.assessment) %>%summarise_each(funs(sum(., na.rm = TRUE)))
+incident_report$Date <- incident_report$Date.of.assessment
+incident_report <- incident_report %>% select(-Date.of.assessment)
 
 
 
 # precipitation and incident  ---------------------------------------------
 
-#JOin incident dataset with precipitation dataset 
 full_data <- preci_data_full_summary %>% left_join( incident_report,by = c("date"="Date")) %>% ungroup()
 
-#Calculate total coloumns in the dataset
 affected_cols <- full_data %>% dplyr::select(starts_with("affected.")) %>% colnames()
 Displaced_cols <- full_data %>% dplyr::select(starts_with("Displaced.")) %>% colnames()
 Partially.Damaged_cols <- full_data %>% dplyr::select(starts_with("Partially.Damaged.")) %>% colnames()
@@ -283,21 +323,16 @@ full_data2 <- full_data %>% mutate(
   total_fully_damaged_hh = rowSums(full_data[Totally.Damaged_cols],na.rm = T),
   total_number_of_incident = rowSums(full_data[Number.of.incidents_cols],na.rm = T),
 ) 
-  
+
 names(full_data2) <- names(full_data2) %>% str_replace_all("interval.interval.","interval.")
 
 
-if(BMD_data == T){
-  
 # bmd_data_cox ----------------------------------------------------------------
 
-# Read BMD data for Cox's Bazar
 precipitation_BMD_cox <- read.csv("inputs/BMD_Rainfall_Timeseries_COXs.csv",na.strings = c("NA",""," ")) %>% dplyr::select(-starts_with("X"))
 
-# Fix formating
 precipitation_BMD_cox <- precipitation_BMD_cox %>% filter(! Date %in% c("Date"),!is.na(Date),!is.na(Rainfall..mm.), Rainfall..mm.!= "T" )
 
-# Fix date formating in the dataset 
 precipitation_BMD_cox_data <- precipitation_BMD_cox %>%  mutate(
   first_two_character = substr(Date,1,2) %>% as.numeric(),
   only_date = if_else(first_two_character>12,substr(Date,1,2),substr(Date,4,5)),
@@ -310,14 +345,10 @@ precipitation_BMD_cox_data <- precipitation_BMD_cox %>%  mutate(
 
 
 # BMD_Data_teknaf ---------------------------------------------------------
-
-#Read data for Teknaf
 precipitation_BMD_TEK <- read.csv("inputs/BMD_Rainfall_Timeseries_TEK.csv",na.strings = c("NA",""," ")) %>% dplyr::select(-starts_with("X"))
 
-# Fix formating
 precipitation_BMD_TEK <- precipitation_BMD_TEK %>% filter(! Date %in% c("Date"),!is.na(Date),!is.na(Rainfall..mm.))
 
-# Fix date formating in the dataset 
 precipitation_BMD_TEK_data <- precipitation_BMD_TEK %>%  mutate(
   first_two_character = substr(Date,1,2) %>% as.numeric(),
   only_date = if_else(first_two_character>12,substr(Date,1,2),substr(Date,4,5)),
@@ -327,32 +358,21 @@ precipitation_BMD_TEK_data <- precipitation_BMD_TEK %>%  mutate(
 ) %>% dplyr::select(-c("only_date","only_month2","only_month","Date","first_two_character")) %>% 
   setnames(old = c("date_new","Rainfall..mm."),new = c("Date","precip.BMD_TEK"))
 
-}
-
-if(weather_data == "yes"){
 
 # read_weather_data -------------------------------------------------------
 
 #######################################msf_8W##############################
-
-  # Read MSF8W weather station data 
 msf_8w <-read.delim("inputs/Hydrometeorological Data 2020/Weather Gagues Data _ June to September 2020/2009_MSF8W_June_to_September.txt",skip = 1)
-
-# Fix Column name 
 header_1_msf_8w <- read.delim("inputs/Hydrometeorological Data 2020/Weather Gagues Data _ June to September 2020/2009_MSF8W_June_to_September.txt", skip = 0) %>% names()
 header_2_msf_8w <- read.delim("inputs/Hydrometeorological Data 2020/Weather Gagues Data _ June to September 2020/2009_MSF8W_June_to_September.txt", skip = 1) %>% names()
 names(msf_8w) <- paste0(header_1_msf_8w, ".",header_2_msf_8w)
 
-# Remove Duplicate data
 msf_8w <- msf_8w %>% distinct()
-
-# Fix date formate
 msf_8w$time_date <-  paste0(msf_8w$X.Date," ",toupper(msf_8w$X.1.Time),"M")
 msf_8w$time_date <- as.POSIXct(msf_8w$time_date, format="%m/%d/%y %I:%M %p")
 msf_8w <- msf_8w %>% select(time_date,Temp.Out,Hi.Temp,Low.Temp.1,Wind.Speed,Wind.1.Dir,Hi.1.Speed.1,
                             Hi.2.Dir.1,X.2.Bar,X.3.Rain,Rain.Rate,Hi.Solar.Rad..1,UV.Index.3)
 
-#Rename column name
 msf_8w <- msf_8w %>% setnames(
   old = c("Temp.Out","Hi.Temp","Low.Temp.1","Wind.Speed","Wind.1.Dir","Hi.1.Speed.1",
           "Hi.2.Dir.1","X.2.Bar","X.3.Rain","Rain.Rate","Hi.Solar.Rad..1","UV.Index.3"),
@@ -360,27 +380,21 @@ msf_8w <- msf_8w %>% setnames(
           "MSF_8_W.Hi_Dir","MSF_8_W.Bar","MSF_8_W.Rain","MSF_8_W.Rain_Rate","MSF_8_W.Hi_Solar_Rad","MSF_8_W.UV_Index")
 )
 
-# Filter out old data
 msf_8w<- msf_8w %>% filter(time_date <= max(precipitation_with_all_date_time_pivot_longer$time_date,na.rm = T))
 
 
 ########################################smep_hub############################
-# Read and fix column name of SMEP-Hub weather station data 
 smep_hub <- read.delim("inputs/Hydrometeorological Data 2020/Weather Gagues Data _ June to September 2020/2009_SMEPHub_June_to_September.txt",skip = 1) 
 header_1_smep_hub <- read.delim("inputs/Hydrometeorological Data 2020/Weather Gagues Data _ June to September 2020/2009_SMEPHub_June_to_September.txt", skip = 0) %>% names()
 header_2_smep_hub <- read.delim("inputs/Hydrometeorological Data 2020/Weather Gagues Data _ June to September 2020/2009_SMEPHub_June_to_September.txt", skip = 1) %>% names()
 names(smep_hub) <- paste0(header_1_smep_hub, ".",header_2_smep_hub)
-
-# Remove duplicate data
 smep_hub <- smep_hub %>% distinct()
 
-# Fix date formatting
 smep_hub$time_date <-  paste0(smep_hub$X.Date," ",toupper(smep_hub$X.1.Time),"M")
 smep_hub$time_date <- as.POSIXct(smep_hub$time_date, format="%m/%d/%y %I:%M %p")
 smep_hub <- smep_hub %>% select(time_date,Temp.Out,Hi.Temp,Low.Temp.1,Wind.Speed,Wind.1.Dir,Hi.1.Speed.1,
                                 Hi.2.Dir.1,X.2.Bar,X.3.Rain,Rain.Rate)
 
-# Rename column name
 smep_hub <- smep_hub %>% setnames(
   old = c("Temp.Out","Hi.Temp","Low.Temp.1","Wind.Speed","Wind.1.Dir","Hi.1.Speed.1",
           "Hi.2.Dir.1","X.2.Bar","X.3.Rain","Rain.Rate"),
@@ -388,13 +402,10 @@ smep_hub <- smep_hub %>% setnames(
           "SMEP_Hub.Hi_Dir","SMEP_Hub.Bar","SMEP_Hub.Rain","SMEP_Hub.Rain_Rate")
 )
 
-# Filter out old data
 smep_hub<- smep_hub %>% filter(time_date <= max(precipitation_with_all_date_time_pivot_longer$time_date,na.rm = T))
-}
 
 # hourly summary ----------------------------------------------------------
 
-# Calculate hourly summary of precipitation data
 df_hourly_cal <- precipitation_with_all_date_time_pivot_longer
 df_hourly_cal$datehour <- cut(df_hourly_cal$time_date, breaks="1 hour") %>% as.POSIXct()
 
@@ -404,70 +415,48 @@ df_hourly <- df_hourly_cal %>% dplyr::group_by(Device.name,datehour) %>% summari
 
 df_hourly_pivot_wider <- df_hourly %>%  pivot_wider(names_from = "Device.name",values_from = "percipitation")
 
+# join hourly summary with msf 8w and smep hub ----------------------------
 
-# join hourly summary with weather data ----------------------------
-
-if(weather_data == T){
 hourly_summary <- df_hourly_pivot_wider %>% left_join(smep_hub,by = c("datehour"="time_date"))
 
 hourly_summary <- hourly_summary %>% left_join(msf_8w,by = c("datehour"="time_date"))
-}
 
-if(weather_data == F){
-  hourly_summary <- df_hourly_pivot_wider 
-  }
-
-# Rename column names
 hourly_summary <- hourly_summary %>% setnames(old = c("interval.GSB Cox's Bazaar-1227", 
-                                    "interval.GSB Teknaf-1226", 
-                                    "interval.UN Camp 16-1280", 
-                                    "interval.UN Chakmarkul-1278", 
-                                    "interval.UN Kuturc-1279"),
-                            new = c("precip.GSB Cox's Bazaar-1227", 
-                                    "precip.GSB Teknaf-1226", 
-                                    "precip.UN Camp 16-1280", 
-                                    "precip.UN Chakmarkul-1278", 
-                                    "precip.UN Kuturc-1279"))
+                                                      "interval.GSB Teknaf-1226", 
+                                                      "interval.UN Camp 16-1280", 
+                                                      "interval.UN Chakmarkul-1278", 
+                                                      "interval.UN Kuturc-1279"),
+                                              new = c("precip.GSB Cox's Bazaar-1227", 
+                                                      "precip.GSB Teknaf-1226", 
+                                                      "precip.UN Camp 16-1280", 
+                                                      "precip.UN Chakmarkul-1278", 
+                                                      "precip.UN Kuturc-1279"))
 
-# join_precipitation_data with BMD, CHIRPS and CFSR data ------------------------------------------------------
-if(BMD_data == T){
+# join_precipitation ------------------------------------------------------
+
 full_data2<- full_data2 %>% left_join(precipitation_BMD_cox_data,by =c ("date"="Date")) #join BMD data
 full_data2<- full_data2 %>% left_join(precipitation_BMD_TEK_data,by =c ("date"="Date")) #join BMD data
-}
 
-if(other_dataset ==T){
-  
 full_data2<- full_data2 %>% left_join(chirps_dataset) #join CHIRPS DATA
 full_data2<- full_data2 %>% left_join(cfrs_dataset) #JOIN CFSR data
 
-}
-
-# Reported Columns 
-all_col_name_for_full_dataset <- c("date", "interval.GSB Cox's Bazaar-1227", "interval.GSB Teknaf-1226", 
-                                   "interval.UN Camp 16-1280", "interval.UN Chakmarkul-1278", "interval.UN Kuturc-1279", 
-                                   "max_3_hr_interval.GSB Cox's Bazaar-1227", "max_3_hr_interval.GSB Teknaf-1226", 
-                                   "max_3_hr_interval.UN Camp 16-1280", "max_3_hr_interval.UN Chakmarkul-1278", 
-                                   "max_3_hr_interval.UN Kuturc-1279","precip.BMD_COX","precip.BMD_TEK","precipitataion_chirps",
-                                   "precipitation_cfrs","total_number_of_incident", "Number.of.incidents_Wind-Storm", 
-                                   "Number.of.incidents_Slope-failure", "Number.of.incidents_Flood", 
-                                   "total_affected_hh", "Affected.HHs_Wind-Storm", 
-                                   "Affected.HHs_Slope-failure", "Affected.HHs_Flood", "total_displaced_hh",
-                                   "Displaced.HH_Wind-Storm", "Displaced.HH_Slope-failure", "Displaced.HH_Flood", 
-                                   "total_partically_damaged_hh","Partially.Damaged.shelters_Wind-Storm", 
-                                   "Partially.Damaged.shelters_Slope-failure", "Partially.Damaged.shelters_Flood", 
-                                   "total_fully_damaged_hh", "Totally.Damaged.shelters_Wind-Storm", 
-                                   "Totally.Damaged.shelters_Slope-failure", "Totally.Damaged.shelters_Flood" 
-)
+full_data2 <- full_data2 %>% dplyr::select(c("date", "interval.GSB Cox's Bazaar-1227", "interval.GSB Teknaf-1226", 
+                                             "interval.UN Camp 16-1280", "interval.UN Chakmarkul-1278", "interval.UN Kuturc-1279", 
+                                             "max_3_hr_interval.GSB Cox's Bazaar-1227", "max_3_hr_interval.GSB Teknaf-1226", 
+                                             "max_3_hr_interval.UN Camp 16-1280", "max_3_hr_interval.UN Chakmarkul-1278", 
+                                             "max_3_hr_interval.UN Kuturc-1279","precip.BMD_COX","precip.BMD_TEK","precipitataion_chirps",
+                                             "precipitation_cfrs","total_number_of_incident", "Number.of.incidents_Wind-Storm", 
+                                             "Number.of.incidents_Slope-failure", "Number.of.incidents_Flood", 
+                                             "total_affected_hh", "Affected.HHs_Wind-Storm", 
+                                             "Affected.HHs_Slope-failure", "Affected.HHs_Flood", "total_displaced_hh",
+                                             "Displaced.HH_Wind-Storm", "Displaced.HH_Slope-failure", "Displaced.HH_Flood", 
+                                             "total_partically_damaged_hh","Partially.Damaged.shelters_Wind-Storm", 
+                                             "Partially.Damaged.shelters_Slope-failure", "Partially.Damaged.shelters_Flood", 
+                                             "total_fully_damaged_hh", "Totally.Damaged.shelters_Wind-Storm", 
+                                             "Totally.Damaged.shelters_Slope-failure", "Totally.Damaged.shelters_Flood" 
+))
 
 
-# Reported cols will be change if we are missing one of data sets (weather data/BDM data etc....). 
-# The following line will make sure all the reported columns are exist in dataset
-col_names_available_for_final_dataset <- all_col_name_for_full_dataset[all_col_name_for_full_dataset %in% names(full_data2)]
-
-# Selet only necessary column 
-full_data2 <- full_data2 %>% dplyr::select(col_names_available_for_final_dataset)
-
-# Rename columns
 full_data2 <- full_data2 %>% 
   setnames(old = c("interval.GSB Cox's Bazaar-1227", 
                    "interval.GSB Teknaf-1226", 
@@ -479,9 +468,11 @@ full_data2 <- full_data2 %>%
                    "precip.UN Camp 16-1280", 
                    "precip.UN Chakmarkul-1278", 
                    "precip.UN Kuturc-1279"))
+# write.csv(full_data2,"outputs/compile_dataset.csv",na = "")
 
 
-# Adding rendered value (accumulated value) to the dataset ----------------------------------------------------
+
+# rendered value added ----------------------------------------------------
 
 rendered_value_pivot_wider <-precipitation_combined_data_with_time_date %>% pivot_wider(names_from = "Device.name",names_prefix = "accumulated.",
                                                                                         names_sep = ".",values_from = Value)
@@ -502,7 +493,7 @@ precipitation_interval_and_rendered <- precipitation_interval_and_rendered %>%
                    "precip.UN Kuturc-1279"))
 
 
-# write datasets -------------------------------------------------------------------
+# write -------------------------------------------------------------------
 
 # names(full_data2) <- names(full_data2) %>% snakecase::to_snake_case() %>% str_replace_all("_h_hs_","_hhs_")
 # names(hourly_summary) <- names(hourly_summary) %>% snakecase::to_snake_case() 
@@ -511,20 +502,18 @@ precipitation_interval_and_rendered <- precipitation_interval_and_rendered %>%
 list_of_datasets <- list("Hydro-Incident DB (daily)" = full_data2,
                          "Hourly Summary (weather-field)" = hourly_summary,
                          "Field Measurements (rain mm)" = precipitation_interval_and_rendered
-                         )
+)
 write.xlsx(list_of_datasets, file = paste0("outputs/compile_dataset/",str_replace_all(Sys.Date(),"-",""),"_","hydromatrological_dataset",".xlsx"))
 
+# names(full_data2) %>% as.data.frame() %>% write.csv("names.csv") 
 
 
 
 # charts ------------------------------------------------------------------
 
-
-############################## CHARTS 1: Daily aggregations of rain (mm) per gauge ####################################
-
 precipitation_data_for_charts <- full_data2 %>% select(c("date", "precip.GSB Cox's Bazaar-1227", "precip.GSB Teknaf-1226", 
                                                          "precip.UN Camp 16-1280", "precip.UN Chakmarkul-1278", "precip.UN Kuturc-1279"
-                                                        ))
+))
 precipitation_data_for_charts <- precipitation_data_for_charts %>% 
   setnames(old = c("precip.GSB Cox's Bazaar-1227", 
                    "precip.GSB Teknaf-1226", 
@@ -539,7 +528,7 @@ precipitation_data_for_charts <- precipitation_data_for_charts %>%
 
 
 precipitation_data_for_charts_pivot_longer_with_NAs <- pivot_longer(precipitation_data_for_charts,cols = !date,names_to = "Device",values_to = "precipitation")
- 
+
 
 precipitation_data_for_charts_pivot_longer <- precipitation_data_for_charts_pivot_longer_with_NAs %>% filter(!is.na(precipitation))
 
@@ -553,7 +542,7 @@ monthly_data <- precipitation_data_for_charts_pivot_longer %>% dplyr::group_by(M
 
 ggplot(precipitation_data_for_charts_pivot_longer_with_NAs, aes(x=date, y=precipitation)) + 
   geom_line(method=lm,se=FALSE,linetype="solid",
-              color="#ee5859",size=1.2,fullrange=TRUE,formula = y ~ x)+
+            color="#ee5859",size=1.2,fullrange=TRUE,formula = y ~ x)+
   # facet_grid(~period) +
   theme(axis.title.x  = element_text(size = 24),
         axis.title.y  = element_text(size = 24),
@@ -572,7 +561,7 @@ ggplot(precipitation_data_for_charts_pivot_longer_with_NAs, aes(x=date, y=precip
         panel.grid.major.y = element_line(size = 0.5, linetype = "dashed",
                                           colour = "#c1c1c1"),
         panel.grid.minor.x = element_line(size = 0.5, linetype = "dashed",
-                             colour = "#c1c1c1"),
+                                          colour = "#c1c1c1"),
         panel.spacing = unit(.5,"cm"),
         legend.title=element_blank(),
         legend.text = element_text(size = 22,color="#58585A"),
@@ -588,7 +577,7 @@ ggplot(precipitation_data_for_charts_pivot_longer_with_NAs, aes(x=date, y=precip
         legend.text.align = 0)+
   facet_wrap(.~Device,ncol= 3)+
   scale_x_date(date_labels="%b",date_breaks  ="1 month",
-               limits=c(as_date("2019-12-30"),as_date("2020-11-15")),expand = c(0,0))+
+               limits=c(as_date("2019-12-30"),as_date("2020-09-30")),expand = c(0,0))+
   ylab("Precipitation (mm)") +xlab("")+labs(title = "Daily aggregations of rain (mm) per gauge",
                                             subtitle = "Significant data gaps are acknowledged as a limitation")
 
@@ -597,7 +586,7 @@ ggsave(path = "outputs/charts/",filename ="precipitatiaon.jpg" ,width=40,height=
 
 
 
-################## CHARTS 2: % days with sufficient measurements for daily aggregation by instrument #######################
+######################
 
 df<-precipitation_with_all_date_time_pivot_longer
 df$Device.name <- str_replace_all(df$Device.name ,
@@ -623,8 +612,8 @@ dat.summary_2<- dat.summary %>% group_by(date,Device.name) %>%  summarise(
   )
 
 number_of_days <- data.frame(
-Month = dat.summary_2$Month %>% unique(),
-number_of_days = c(31,29,31,30,31,30,31,31,30,31,30))
+  Month = dat.summary_2$Month %>% unique(),
+  number_of_days = c(31,29,31,30,31,30,31,31,30))
 
 dat.summary_2 <- dat.summary_2 %>% left_join(number_of_days) %>% mutate(
   percent = count/number_of_days*100
@@ -663,7 +652,7 @@ ggplot(dat.summary_2, aes(fill=Device.name, y=percent, x=Month)) +
         plot.margin = unit(c(.1, .1, 0, 0), "cm"),
         legend.text.align = 0)+ ylab("Available days (%)")+
   scale_fill_manual(values = palette)+labs(title = "% days with sufficient measurements for daily aggregation by instrument",
-                                            subtitle = "For daily aggregation, only days with measurements spanning at least 8 hours are considered sufficient")
+                                           subtitle = "For daily aggregation, only days with measurements spanning at least 8 hours are considered sufficient")
 
 # scale_linetype_manual(values = line_typ)
 
@@ -676,7 +665,6 @@ daily_count <-dat.summary %>% group_by(Device.name,date) %>% summarise(
   count = sum(count,na.rm = T)
 ) 
 
-# we should have 96 ( 24*60/15) data each day for each device, so to calculate available data we need to multipy number of days with 96  
 daily_count_overall <- daily_count %>% group_by(Device.name) %>% summarise(
   total_data= n()*96,
   available_data = sum(count,na.rm = T),

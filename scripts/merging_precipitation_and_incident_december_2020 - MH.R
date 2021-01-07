@@ -1,3 +1,11 @@
+# Hydro-Meteorological Database
+# Data Merge Script
+# Natural Hazards TWG 
+# December 2020
+
+# This script takes hydro-meteorological data and combines it with incident reports from the Bangladesh refugee camps to produce a single dataset.
+
+
 rm (list = ls())
 
 library(rlang)
