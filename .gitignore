@@ -14,7 +14,23 @@
 
 
 
+
+
+!/inputs/BMD_data/.gitkeep
+!/inputs/cfrs_chirps_precipitation_datasets/.gitkeep
+!/inputs/incident_report/.gitkeep
+!/inputs/precipitation_data/.gitkeep
+!/inputs/weather_dataset/.gitkeep
+
+
+
+
 /outputs/charts/*
 /outputs/compile_dataset/*
 /outputs/incident_report_gps_check/*
+
+!/outputs/charts/.gitkeep
+!/outputs/compile_dataset/.gitkeep
+!/outputs/incident_report_gps_check/.gitkeep
+
 
