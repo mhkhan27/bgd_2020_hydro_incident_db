@@ -4,8 +4,8 @@ This repo contains the scripts that are used to merge the precipitation data wit
 
 ## inputs
 Precipitation data is collected from 3 different sources.<br />
- 1. Bangladesh Meteological Department (inputs/BMD_data)<br />
- 2. UNDP rain guages data (inputs/precipitation_data/[YEAR])<br />
+ 1. Bangladesh Meteorological Department (inputs/BMD_data)<br />
+ 2. UNDP rain gauges data (inputs/precipitation_data/[YEAR])<br />
  3. Satellite base precipitation data (inputs/cfrs_chirps_precipitation_datasets)<br />
 
 Two weather datasets are collected from UNDP.<br />
