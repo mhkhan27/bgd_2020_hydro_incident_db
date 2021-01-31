@@ -5,22 +5,16 @@
 
 
 
-/outputs/*
-/inputs/*
+
+/inputs/BMD_data/*
+/inputs/cfrs_chirps_precipitation_datasets/*
+/inputs/incident_report/*
+/inputs/precipitation_data/*
+/inputs/weather_dataset/*
 
 
 
-
-
-!/inputs/BMD_data/.gitkeep
-!/inputs/cfrs_chirps_precipitation_datasets/.gitkeep
-!/inputs/incident_report/.gitkeep
-!/inputs/precipitation_data/.gitkeep
-!/inputs/weather_dataset/.gitkeep
-!/inputs/renaming/.gitkeep
-
-
-!/outputs/charts/.gitkeep
-!/outputs/compile_dataset/.gitkeep
-!/outputs/incident_report_gps_check/.gitkeep
+/outputs/charts/*
+/outputs/compile_dataset/*
+/outputs/incident_report_gps_check/*
 
