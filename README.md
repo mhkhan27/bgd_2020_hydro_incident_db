@@ -1,9 +1,24 @@
 # bgd_2020_hydro_incident_db
 
-Origional data is downloaded into:
-.\inputs\Hydrometeorological Data 2020
+This repo contains the scripts that are used to merge the precipitation data with incident data and weather data. The input folder contains all different datasets that are collected from different sources. 
 
-The rainfall data (.\inputs\Hydrometeorological Data 2020\Rain Gagues Data _ Monthly 2020_) is then converted into .csv and saved in:
-.\inputs\precipitation_data\2020
+## inputs
+Precipitation data is collected from 3 different sources.
+	1. Bangladesh Meteological Department (inputs/BMD_data)
+	2. UNDP rain guages data (inputs/precipitation_data/[YEAR])
+	3. Satellite base precipitation data (inputs/cfrs_chirps_precipitation_datasets)
 
-This data is then used in the script. The different files are joined together.
+Two weather datasets are collected from UNDP.
+	1. MSF 8W (inputs/weather_dataset/2009_MSF8W_June_to_September)
+	2. SMEP Hub (inputs/weather_dataset/2009_SMEPHub_June_to_September)
+
+Incident data are collected from IOM 
+	1. Incident report (inputs/incident_report/SMSD Incident database 2020 Jan - Nov)
+
+Note: No inputs are uploaded in here to ensure the data confidentiality. Contact with REACH Initiative, Bangladesh team if interested.
+
+## outputs
+The outputs folder contains the output that results from the script. 
+
+## scripts
+The script folder contains all the scripts that are used to merge the dataset. However you should run the "merging_rain_weather_and_incident_december_2020.R" only. All the other scripts are sourced to this script. 
